@@ -1,57 +1,52 @@
-use std::mem;
+use std::io::Write;
 
-pub struct Vec {
+use rand;
+
+#[derive(Clone, Copy)]
+pub struct Vector {
     x: f64,
     y: f64,
     z: f64,
 }
 
-impl Vec {
-    pub fn add(&self, other: &Vec) -> Self {
+impl Vector {
+    pub fn new(x: f64, y: f64, z: f64) -> Self {
         Self {
-            x: self.x+other.x,
-            y: self.y+other.y,
-            z: self.z+other.z,
+            x,
+            y,
+            z,
         }
     }
 
-    pub fn sub(&self, other: &Vec) -> Self {
-        Self {
-            x: self.x-other.x,
-            y: self.y-other.y,
-            z: self.z-other.z,
-        }
+    pub fn add(&self, other: &Vector) -> Self {
+        Self::new(self.x+other.x, self.y+other.y, self.z+other.z)
     }
 
-    pub fn mul(&self, other: &Vec) -> Self {
-        Self {
-            x: self.x*other.x,
-            y: self.y*other.y,
-            z: self.z*other.z,
-        }
+    pub fn sub(&self, other: &Vector) -> Self {
+        Self::new(self.x-other.x, self.y-other.y, self.z-other.z)
     }
 
-    pub fn mul_f(&self, d: f64) -> Self {
-        Self {
-            x: self.x*d,
-            y: self.y*d,
-            z: self.z*d,
-        }
+    pub fn mul(&self, d: f64) -> Self {
+        Self::new(self.x*d, self.y*d, self.z*d)
     }
 
-    pub fn norm(&mut self) -> &mut Self {
+    pub fn mult(&self, other: &Vector) -> Self {
+        Self::new(self.x*other.x, self.y*other.y, self.z*other.z)
+    }
+
+    pub fn norm(&mut self) -> Vector {
         let denom = (self.x.powi(2)+self.y.powi(2)+self.z.powi(2)).sqrt().recip();
         self.x *= denom;
         self.y *= denom;
         self.z *= denom;
-        self
+        *self
     }
 
-    pub fn dot(&self, other: &Vec) -> f64 {
-        self.x*other.x + self.y*other.y + self.z+other.z
+    pub fn dot(&self, other: &Vector) -> f64 {
+        self.x*other.x + self.y*other.y + self.z*other.z
     }
 
-    pub fn modulo(&self, other: &Vec) -> Self {
+    pub fn modulo(&self, other: &Vector) -> Self {
         Self {
             x: self.y*other.z - self.z*other.y,
             y: self.z*other.x - self.x*other.z,
@@ -60,13 +55,14 @@ impl Vec {
     }
 }
 
+#[derive(Clone, Copy)]
 pub struct Ray {
-    o: Vec,
-    d: Vec,
+    o: Vector,
+    d: Vector,
 }
 
 impl Ray {
-    pub fn new(o: Vec, d: Vec) -> Self {
+    pub fn new(o: Vector, d: Vector) -> Self {
         Self {
             o,
             d,
@@ -82,14 +78,14 @@ pub enum Refl {
 
 pub struct Sphere {
     rad: f64,
-    p: Vec,
-    e: Vec,
-    c: Vec,
+    p: Vector,
+    e: Vector,
+    c: Vector,
     refl: Refl,
 }
 
 impl Sphere {
-    pub fn new(rad: f64, p: Vec, e: Vec, c: Vec, refl: Refl) -> Self {
+    pub fn new(rad: f64, p: Vector, e: Vector, c: Vector, refl: Refl) -> Self {
         Self {
             rad,
             p,
@@ -126,18 +122,222 @@ impl Sphere {
 
 // clamp and toInt functions: use built-ins
 
-fn intersect(spheres: &[Sphere], r: &Ray, t: &mut f64, id: &mut i32) -> bool {
+fn intersect(spheres: &[Sphere], r: &Ray, t: &mut f64, id: &mut usize) -> bool {
     let inf = 1e20f64;
-    *t = inf; // Fix: were originally passed by referece
+    *t = inf;
     for (i, sphere) in spheres.iter().enumerate() {
         let d = sphere.intersect(&r);
         if d != 0f64 && d < *t {
             *t = d;
-            *id = i as i32;
+            *id = i;
         }
     }
     *t < inf
 }
 
-fn main() {
+fn radiance(spheres: &[Sphere], r: &Ray, depth: i32, Xi: &mut[u16; 3]) -> Vector {
+    let mut t = 0f64;
+    let mut id = 0usize;
+    if !intersect(&spheres, r, &mut t, &mut id) {
+        return Vector::new(0.0, 0.0, 0.0);
+    }
+    let ref obj = spheres[id];
+    let x = r.o.add(&r.d.mul(t));
+    let n = x.sub(&obj.p).norm();
+    let nl = if n.dot(&r.d) < 0.0 {n} else {n.mul(-1.0)};
+    let mut f = obj.c;
+    let p = f.x.max(f.y).max(f.z); // max refl
+    
+    let depth = depth + 1;
+    if depth > 5 {
+        if rand::random::<f64>() < p {
+            f = f.mul(1.0/p);
+        }
+        else {
+            return obj.e;
+        }
+    }
+
+    match obj.refl {
+        Refl::Diff => {
+            let r1 = 2.0*std::f64::consts::PI*rand::random::<f64>();
+            let r2 = rand::random::<f64>();
+            let r2s = r2.sqrt();
+            let w = nl;
+            let u = if w.x.abs() > 0.1 {
+                Vector::new(0., 1., 0.)
+            }
+            else {
+                Vector::new(1., 0., 0.)
+            };
+            let mut u = u.modulo(&w);
+            u.norm();
+            let v = w.modulo(&u);
+            let d = w
+            .mul((1.-r2).sqrt())
+            .norm();
+            let d = d.add(
+                &u
+                .mul(r1.cos())
+                .mul(r2s) 
+                .add(
+                    &v.mul(r1.sin())
+                    .mul(r2s)
+                )
+            );
+            return obj.e.add(&f.mult(&radiance(spheres, &Ray::new(x, d), depth, Xi)));
+        },
+        Refl::Spec => {
+            return obj
+            .e
+            .add(
+                &f
+                .mult(
+                    &radiance(
+                        &spheres,
+                        &Ray::new(x, r.d.sub(&n.mul(n.mul(2.0).dot(&r.d)))),
+                        depth,
+                        Xi
+                    )
+                )
+            );
+        }
+        _ => ()
+    }
+    
+    let refl_ray = Ray::new(x, r.d.sub(&n.mul(n.mul(2.0).dot(&r.d))));
+    let into = n.dot(&nl) > 0f64;
+    let direction = if into {1f64} else {-1f64};
+    let nc = 1f64;
+    let nt = 1.5f64;
+    let nnt = if into {nc/nt} else {nt/nc};
+    let ddn = r.d.dot(&nl);
+    let cos2t = 1.0 - nnt.powi(2) * (1.0-ddn.powi(2));
+    if cos2t < 0f64 {
+        return obj.e.add(&f.mult(&radiance(spheres,&refl_ray, depth, Xi)));
+    }
+
+    let tdir = (r.d.mul(nnt).sub(&n.mul(direction).mul(ddn*nnt+cos2t.sqrt()))).norm();
+    let a = nt-nc;
+    let b = nt+nc;
+    let R0 = a.powi(2)/b.powi(2);
+    let c = 1f64 - (if into {-ddn} else {tdir.dot(&n)});
+    let Re = R0 + (1f64-R0)*c.powi(5);
+    let Tr = 1f64 - Re;
+    let P = 0.25f64 + 0.5*Re;
+    let RP = Re/P;
+    let TP = Tr/(1f64-P);
+
+    let res = if depth > 2 {
+        if rand::random::<f64>() < P {
+            radiance(&spheres, &refl_ray, depth, Xi).mul(RP)
+        }
+        else {
+            radiance(&spheres, &Ray::new(x, tdir), depth, Xi).mul(TP)
+        }
+    }
+    else {
+        radiance(&spheres, &refl_ray, depth, Xi).add(&radiance(&spheres, &Ray::new(x, tdir), depth, Xi).mul(Tr))
+    };
+
+    obj.e.add(&f.mult(&res))
+}
+
+fn write_to_file(c: &Vec<Vector>, path: &str) {
+    let mut f = std::fs::File::create(path).expect("Could not open file");
+    c.iter().for_each(|v| {
+        let func = |x: f64| {(x.clamp(0.0, 1.0).powf(1.0/2.2)*255.0 + 0.5) as u8};
+        let x = func(v.x);
+        let y = func(v.y);
+        let z = func(v.z);
+        f.write_all(format!("{} {} {} ", x, y ,z).as_bytes()).unwrap();
+    });
+}
+
+pub fn main() {
+    // Scene: radius, position, emission, color, material
+    let spheres = [
+        Sphere::new(
+            1e5, 
+            Vector::new(1e5+1.0,40.8,81.6), 
+            Vector::new(0.0, 0.0, 0.0),
+            Vector::new(0.75, 0.25, 0.25), 
+            Refl::Diff
+        ), //Left
+        Sphere::new(
+            1e5,
+            Vector::new(-1e5+99.0,40.8,81.6),
+            Vector::new(0.0, 0.0, 0.0), 
+            Vector::new(0.25,0.25,0.75), 
+            Refl::Diff
+        ), //Right
+        Sphere::new(
+            1e5,
+            Vector::new(50.0,40.8, 1e5), 
+            Vector::new(0.0, 0.0, 0.0), 
+            Vector::new(0.75,0.75,0.75), 
+            Refl::Diff
+        ), //Back
+        Sphere::new(
+            1e5,
+            Vector::new(50.0, 40.8, -1e5+170.0), 
+            Vector::new(0.0, 0.0, 0.0), 
+            Vector::new(0.0, 0.0, 0.0), 
+            Refl::Diff
+        ), //Front
+        Sphere::new(
+            1e5,
+            Vector::new(50.0, 1e5, 81.6), 
+            Vector::new(0.0, 0.0, 0.0), 
+            Vector::new(0.75, 0.75, 0.75), 
+            Refl::Diff
+        ), //Bottom
+        Sphere::new(
+            1e5,
+            Vector::new(50.0, -1e5+81.6, 81.6), 
+            Vector::new(0.0, 0.0, 0.0), 
+            Vector::new(0.75,0.75,0.75), 
+            Refl::Diff
+        ), //Top
+        Sphere::new(
+            16.5,
+            Vector::new(27.0,16.5,47.0), 
+            Vector::new(0.0, 0.0, 0.0), 
+            Vector::new(0.999, 0.999, 0.999), 
+            Refl::Spec
+        ), //Mirror
+        Sphere::new(
+            600.0,
+            Vector::new(50.0, 681.6-0.27, 81.6), 
+            Vector::new(12.0, 12.0, 12.0), 
+            Vector::new(0.0, 0.0, 0.0), 
+            Refl::Diff
+        ), //Lite
+        Sphere::new(
+            16.5,
+            Vector::new(73.0 ,16.5, 78.0), 
+            Vector::new(0.0, 0.0, 0.0), 
+            Vector::new(0.999,0.999,0.999), 
+            Refl::Refr
+        ), //Glass
+    ];
+    
+    let w = 1024;
+    let h = 768;
+    let args: Vec<String> = std::env::args().collect();
+    let samps = if args.len() == 2 {
+        args[1].parse::<i32>().unwrap()/4
+    }
+    else {
+        1
+    };
+    let cam = Ray::new(Vector::new(50., 52., 295.6), Vector::new(50., 52., 295.6).norm());
+    let cx = Vector::new((w as f64)*0.5135/(h as f64), 0., 0.);
+    let cy = cx.modulo(&cam.d).norm().mul(0.5135);
+    let mut c = Vec::<Vector>::new();
+    c.reserve(w*h);
+    
+    // for loop here
+    
+    write_to_file(&c, "image.ppm");
 }
