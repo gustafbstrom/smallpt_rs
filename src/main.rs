@@ -1,5 +1,4 @@
 use std::io::Write;
-
 use rand;
 
 #[derive(Clone, Copy)]
@@ -120,8 +119,6 @@ impl Sphere {
     }
 }
 
-// clamp and toInt functions: use built-ins
-
 fn intersect(spheres: &[Sphere], r: &Ray, t: &mut f64, id: &mut usize) -> bool {
     let inf = 1e20f64;
     *t = inf;
@@ -135,7 +132,7 @@ fn intersect(spheres: &[Sphere], r: &Ray, t: &mut f64, id: &mut usize) -> bool {
     *t < inf
 }
 
-fn radiance(spheres: &[Sphere], r: &Ray, depth: i32, Xi: &mut[u16; 3]) -> Vector {
+fn radiance(spheres: &[Sphere], r: &Ray, depth: i32) -> Vector {
     let mut t = 0f64;
     let mut id = 0usize;
     if !intersect(&spheres, r, &mut t, &mut id) {
@@ -185,22 +182,16 @@ fn radiance(spheres: &[Sphere], r: &Ray, depth: i32, Xi: &mut[u16; 3]) -> Vector
                     .mul(r2s)
                 )
             );
-            return obj.e.add(&f.mult(&radiance(spheres, &Ray::new(x, d), depth, Xi)));
+            return obj.e.add(&f.mult(&radiance(spheres, &Ray::new(x, d), depth)));
         },
         Refl::Spec => {
             return obj
             .e
-            .add(
-                &f
-                .mult(
-                    &radiance(
-                        &spheres,
-                        &Ray::new(x, r.d.sub(&n.mul(n.mul(2.0).dot(&r.d)))),
-                        depth,
-                        Xi
-                    )
-                )
-            );
+            .add(&f.mult(&radiance(
+                &spheres,
+                &Ray::new(x, r.d.sub(&n.mul(n.mul(2.0).dot(&r.d)))),
+                depth
+            )));
         }
         _ => ()
     }
@@ -214,30 +205,44 @@ fn radiance(spheres: &[Sphere], r: &Ray, depth: i32, Xi: &mut[u16; 3]) -> Vector
     let ddn = r.d.dot(&nl);
     let cos2t = 1.0 - nnt.powi(2) * (1.0-ddn.powi(2));
     if cos2t < 0f64 {
-        return obj.e.add(&f.mult(&radiance(spheres,&refl_ray, depth, Xi)));
+        return obj.e.add(&f.mult(&radiance(spheres,&refl_ray, depth)));
     }
 
-    let tdir = (r.d.mul(nnt).sub(&n.mul(direction).mul(ddn*nnt+cos2t.sqrt()))).norm();
+    let tdir = (
+        r
+        .d
+        .mul(nnt)
+        .sub(&n.mul(direction)
+        .mul(ddn*nnt+cos2t.sqrt()))
+    ).norm();
     let a = nt-nc;
     let b = nt+nc;
-    let R0 = a.powi(2)/b.powi(2);
+    let r0 = a.powi(2)/b.powi(2);
     let c = 1f64 - (if into {-ddn} else {tdir.dot(&n)});
-    let Re = R0 + (1f64-R0)*c.powi(5);
-    let Tr = 1f64 - Re;
-    let P = 0.25f64 + 0.5*Re;
-    let RP = Re/P;
-    let TP = Tr/(1f64-P);
+    let re = r0 + (1f64-r0)*c.powi(5);
+    let tr = 1f64 - re;
+    let p = 0.25f64 + 0.5*re;
+    let rp = re/p;
+    let tp = tr/(1f64-p);
 
     let res = if depth > 2 {
-        if rand::random::<f64>() < P {
-            radiance(&spheres, &refl_ray, depth, Xi).mul(RP)
+        if rand::random::<f64>() < p {
+            radiance(&spheres, &refl_ray, depth).mul(rp)
         }
         else {
-            radiance(&spheres, &Ray::new(x, tdir), depth, Xi).mul(TP)
+            radiance(&spheres, &Ray::new(x, tdir), depth).mul(tp)
         }
     }
     else {
-        radiance(&spheres, &refl_ray, depth, Xi).add(&radiance(&spheres, &Ray::new(x, tdir), depth, Xi).mul(Tr))
+        radiance(&spheres, &refl_ray, depth)
+        .add(
+            &radiance(
+                &spheres,
+                &Ray::new(x, tdir),
+                depth,
+            )
+            .mul(tr)
+        )
     };
 
     obj.e.add(&f.mult(&res))
@@ -245,7 +250,7 @@ fn radiance(spheres: &[Sphere], r: &Ray, depth: i32, Xi: &mut[u16; 3]) -> Vector
 
 fn write_to_file(c: &Vec<Vector>, w: usize, h: usize, path: &str) {
     let mut f = std::fs::File::create(path).expect("Could not open file");
-    f.write_all(format!("P3\n{} {}\n{}\n", w, h, 255).as_bytes());
+    f.write_all(format!("P3\n{} {}\n{}\n", w, h, 255).as_bytes()).unwrap();
     c.iter().for_each(|v| {
         let func = |x: f64| {(x.clamp(0.0, 1.0).powf(1.0/2.2)*255.0 + 0.5) as u8};
         let x = func(v.x);
@@ -323,8 +328,8 @@ pub fn main() {
         ), //Glass
     ];
     
-    const w: usize = 1024;
-    const h: usize = 768;
+    const W: usize = 1024;
+    const H: usize = 768;
     let args: Vec<String> = std::env::args().collect();
     let samps = if args.len() == 2 {
         args[1].parse::<i32>().unwrap()/4
@@ -333,16 +338,15 @@ pub fn main() {
         1
     };
     let cam = Ray::new(Vector::new(50., 52., 295.6), Vector::new(50., 52., 295.6).norm());
-    let cx = Vector::new((w as f64)*0.5135/(h as f64), 0., 0.);
+    let cx = Vector::new((W as f64)*0.5135/(H as f64), 0., 0.);
     let cy = cx.modulo(&cam.d).norm().mul(0.5135);
-    let mut c = vec![Vector::new(0.0, 0.0, 0.0); w*h];
+    let mut c = vec![Vector::new(0.0, 0.0, 0.0); W*H];
     
     // for loop here
-    for y in 0..h {
-        eprint!("\rRendering ({} spp) {:5.2}%", samps*4, 100.*(y as f32)/((h as f32)-1.));
-        let mut Xi = [0u16; 3];
-        for x in 0..w {
-            let i = (h-y-1)*w+x;
+    for y in 0..H {
+        eprint!("\rRendering ({} spp) {:5.2}%", samps*4, 100.*(y as f32)/((H as f32)-1.));
+        for x in 0..W {
+            let i = (H-y-1)*W+x;
             for sy in 0..2 {
                 for sx in 0..2 {
                     let mut r = Vector::new(0., 0., 0.);
@@ -362,8 +366,8 @@ pub fn main() {
                             1.0 - (2.0-r2).sqrt()
                         };
                         let mut d = cx
-                            .mul(((sx as f64+0.5+dx)/2.0 + x as f64)/w as f64 - 0.5)
-                                .add(&cy.mul(((sy as f64+0.5+dy)/2.0 + y as f64)/h as f64 - 0.5))
+                            .mul(((sx as f64+0.5+dx)/2.0 + x as f64)/W as f64 - 0.5)
+                                .add(&cy.mul(((sy as f64+0.5+dy)/2.0 + y as f64)/H as f64 - 0.5))
                             .add(&cam.d);
                         r = r
                         .add(
@@ -374,7 +378,6 @@ pub fn main() {
                                     d.norm(),
                                 ),
                                 0,
-                                &mut Xi,
                             )
                             .mul(1./samps as f64)
                         );
@@ -391,5 +394,5 @@ pub fn main() {
     }
     let path = "image.ppm";
     println!("\nWriting to file {}", path);
-    write_to_file(&c, w, h, path);
+    write_to_file(&c, W, H, path);
 }
