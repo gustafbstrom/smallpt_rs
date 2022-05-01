@@ -243,8 +243,9 @@ fn radiance(spheres: &[Sphere], r: &Ray, depth: i32, Xi: &mut[u16; 3]) -> Vector
     obj.e.add(&f.mult(&res))
 }
 
-fn write_to_file(c: &Vec<Vector>, path: &str) {
+fn write_to_file(c: &Vec<Vector>, w: usize, h: usize, path: &str) {
     let mut f = std::fs::File::create(path).expect("Could not open file");
+    f.write_all(format!("P3\n{} {}\n{}\n", w, h, 255).as_bytes());
     c.iter().for_each(|v| {
         let func = |x: f64| {(x.clamp(0.0, 1.0).powf(1.0/2.2)*255.0 + 0.5) as u8};
         let x = func(v.x);
@@ -322,8 +323,8 @@ pub fn main() {
         ), //Glass
     ];
     
-    let w = 1024;
-    let h = 768;
+    const w: usize = 1024;
+    const h: usize = 768;
     let args: Vec<String> = std::env::args().collect();
     let samps = if args.len() == 2 {
         args[1].parse::<i32>().unwrap()/4
@@ -334,10 +335,61 @@ pub fn main() {
     let cam = Ray::new(Vector::new(50., 52., 295.6), Vector::new(50., 52., 295.6).norm());
     let cx = Vector::new((w as f64)*0.5135/(h as f64), 0., 0.);
     let cy = cx.modulo(&cam.d).norm().mul(0.5135);
-    let mut c = Vec::<Vector>::new();
-    c.reserve(w*h);
+    let mut c = vec![Vector::new(0.0, 0.0, 0.0); w*h];
     
     // for loop here
-    
-    write_to_file(&c, "image.ppm");
+    for y in 0..h {
+        eprint!("\rRendering ({} spp) {:5.2}%", samps*4, 100.*(y as f32)/((h as f32)-1.));
+        let mut Xi = [0u16; 3];
+        for x in 0..w {
+            let i = (h-y-1)*w+x;
+            for sy in 0..2 {
+                for sx in 0..2 {
+                    let mut r = Vector::new(0., 0., 0.);
+                    for _ in 0..samps {
+                        let r1 = 2. * rand::random::<f64>();
+                        let dx = if r1 < 1.0 {
+                            r1.sqrt()-1.0
+                        }
+                        else {
+                            1.0 - (2.0-r1).sqrt()
+                        };
+                        let r2 = 2. * rand::random::<f64>();
+                        let dy = if r2 < 1.0 {
+                            r2.sqrt()-1.0
+                        }
+                        else {
+                            1.0 - (2.0-r2).sqrt()
+                        };
+                        let mut d = cx
+                            .mul(((sx as f64+0.5+dx)/2.0 + x as f64)/w as f64 - 0.5)
+                                .add(&cy.mul(((sy as f64+0.5+dy)/2.0 + y as f64)/h as f64 - 0.5))
+                            .add(&cam.d);
+                        r = r
+                        .add(
+                            &radiance(
+                                &spheres,
+                                &Ray::new(
+                                    cam.o.add(&d).mul(140.),
+                                    d.norm(),
+                                ),
+                                0,
+                                &mut Xi,
+                            )
+                            .mul(1./samps as f64)
+                        );
+                    }
+                    let v = Vector::new(
+                        r.x.clamp(0.0, 1.0), 
+                        r.y.clamp(0.0, 1.0),
+                        r.z.clamp(0.0, 1.0),
+                    ).mul(0.25);
+                    c[i] = c[i].add(&v);
+                }
+            }
+        }
+    }
+    let path = "image.ppm";
+    println!("\nWriting to file {}", path);
+    write_to_file(&c, w, h, path);
 }
