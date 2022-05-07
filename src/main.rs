@@ -2,6 +2,35 @@ use std::io::Write;
 use std::ops;
 use rand;
 
+// A custom linear congruential (pseudo-random number) generator; 'cause why not!?
+//
+// struct LCG {
+//     m: u64,
+//     a: u64,
+//     c: u64,
+//     seed: u64,
+// }
+// // seed = (a * seed + c) % modulus
+// impl LCG {
+//     fn new(seed: u64) -> Self {
+//         Self {
+//             m: 1<<48,
+//             a: 0x5DEECE66D,
+//             c: 11,
+//             seed,
+//         }
+//     }
+// }
+//
+// impl Iterator for LCG {
+//     type Item = u64;
+//
+//     fn next(&mut self) -> Option<Self::Item> {
+//         self.seed = (self.a * self.seed + self.c) % self.m;
+//         Some(self.seed)
+//     }
+// }
+
 #[derive(Clone, Copy)]
 pub struct Vector {
     x: f64,
@@ -18,22 +47,6 @@ impl Vector {
         }
     }
 
-    // pub fn add(&self, other: &Vector) -> Self {
-    //     Self::new(self.x+other.x, self.y+other.y, self.z+other.z)
-    // }
-
-    // pub fn sub(&self, other: &Vector) -> Self {
-    //     Self::new(self.x-other.x, self.y-other.y, self.z-other.z)
-    // }
-
-    // pub fn mul(&self, d: f64) -> Self {
-    //     Self::new(self.x*d, self.y*d, self.z*d)
-    // }
-
-    // pub fn mult(&self, other: &Vector) -> Self {
-    //     Self::new(self.x*other.x, self.y*other.y, self.z*other.z)
-    // }
-
     pub fn norm(&mut self) -> Vector {
         let denom = (self.x.powi(2)+self.y.powi(2)+self.z.powi(2)).sqrt().recip();
         self.x *= denom;
@@ -45,14 +58,6 @@ impl Vector {
     pub fn dot(&self, other: &Vector) -> f64 {
         self.x*other.x + self.y*other.y + self.z*other.z
     }
-
-    // pub fn modulo(&self, other: &Vector) -> Self {
-    //     Self {
-    //         x: self.y*other.z - self.z*other.y,
-    //         y: self.z*other.x - self.x*other.z,
-    //         z: self.x*other.y - self.y*other.x,
-    //     }
-    // }
 }
 
 impl ops::Add<Vector> for Vector {
@@ -270,15 +275,18 @@ fn radiance(spheres: &[Sphere], r: &Ray, depth: i32) -> Vector {
 }
 
 fn write_to_file(c: &Vec<Vector>, w: usize, h: usize, path: &str) {
+    let func = |x: f64| {(x.clamp(0.0, 1.0).powf(1.0/2.2)*255.0 + 0.5) as u8};
+    let buf = c
+        .into_iter()
+        .map(|v|
+            format!("{} {} {} ", func(v.x), func(v.y) , func(v.z))
+        )
+        .collect::<Vec<String>>()
+        .concat();
+
     let mut f = std::fs::File::create(path).expect("Could not open file");
     f.write_all(format!("P3\n{} {}\n{}\n", w, h, 255).as_bytes()).unwrap();
-    c.iter().for_each(|v| {
-        let func = |x: f64| {(x.clamp(0.0, 1.0).powf(1.0/2.2)*255.0 + 0.5) as u8};
-        let x = func(v.x);
-        let y = func(v.y);
-        let z = func(v.z);
-        f.write_all(format!("{} {} {} ", x, y ,z).as_bytes()).unwrap();
-    });
+    f.write_all(buf.as_bytes()).unwrap();
 }
 
 pub fn main() {
@@ -358,7 +366,10 @@ pub fn main() {
     else {
         1
     };
-    let cam = Ray::new(Vector::new(50., 52., 295.6), Vector::new(0f64, -0.042612, -1f64).norm());
+    let cam = Ray::new(
+        Vector::new(50., 52., 295.6),
+        Vector::new(0f64, -0.042612, -1f64).norm()
+    );
     let cx = Vector::new((W as f64)*0.5135/(H as f64), 0., 0.);
     let cy = (cx%cam.d).norm()*0.5135;
     let mut c = vec![Vector::new(0.0, 0.0, 0.0); W*H];
@@ -390,8 +401,11 @@ pub fn main() {
                             cx*(((sx as f64+0.5+dx)/2.0 + x as f64)/W as f64 - 0.5)
                             + cy*(((sy as f64+0.5+dy)/2.0 + y as f64)/H as f64 - 0.5)
                             + cam.d;
-                        r = r
-                            + radiance(&spheres,&Ray::new(cam.o + d*140., d.norm()), 0) * (samps as f64).recip();
+                        r = r + radiance(
+                            &spheres,
+                            &Ray::new(cam.o + d*140., d.norm()),
+                            0
+                        )*(samps as f64).recip();
                     }
                     let v = Vector::new(
                         r.x.clamp(0.0, 1.0), 
